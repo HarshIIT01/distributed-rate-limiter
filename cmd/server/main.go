@@ -6,23 +6,35 @@ import (
 	"time"
 
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/handler"
+	"github.com/HarshIIT01/distributed-rate-limiter/internal/redisclient"
 )
 
 func main() {
-	// Create a new ServeMux (request router).
-	// We use NewServeMux() instead of http.DefaultServeMux to avoid
-	// accidentally exposing routes registered by third-party packages.
+	// ── Redis ────────────────────────────────────────────────────────────────
+	// Connect to Redis before starting the HTTP server.
+	// If Redis is unreachable, we fail fast at startup rather than serving
+	// requests that will fail anyway.
+	redisClient, err := redisclient.New(redisclient.Config{
+		Address:  "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	if err != nil {
+		log.Fatalf("FATAL: %v", err)
+	}
+	log.Println("INFO: connected to Redis")
+
+	// Silence the "declared but not used" error for now.
+	// We will pass redisClient to rate-limiter handlers in the next phase.
+	_ = redisClient
+
+	// ── HTTP Router ──────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
 
-	// Wire up handlers.
-	// main.go's only job is to create dependencies and register routes.
-	// No business logic lives here.
 	healthHandler := handler.NewHealthHandler()
 	mux.Handle("/health", healthHandler)
 
-	// Define the server with explicit timeouts.
-	// NEVER use http.ListenAndServe directly in production code —
-	// it creates a server with no timeouts, which is a security risk.
+	// ── HTTP Server ──────────────────────────────────────────────────────────
 	server := &http.Server{
 		Addr:         ":8080",
 		Handler:      mux,
@@ -33,8 +45,6 @@ func main() {
 
 	log.Println("INFO: server starting on :8080")
 
-	// ListenAndServe blocks forever (until the process is killed).
-	// It returns an error only if it fails to start.
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("FATAL: server failed to start: %v", err)
 	}

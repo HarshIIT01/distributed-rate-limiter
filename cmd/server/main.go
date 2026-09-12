@@ -6,14 +6,12 @@ import (
 	"time"
 
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/handler"
+	"github.com/HarshIIT01/distributed-rate-limiter/internal/limiter"
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/redisclient"
 )
 
 func main() {
 	// ── Redis ────────────────────────────────────────────────────────────────
-	// Connect to Redis before starting the HTTP server.
-	// If Redis is unreachable, we fail fast at startup rather than serving
-	// requests that will fail anyway.
 	redisClient, err := redisclient.New(redisclient.Config{
 		Address:  "localhost:6379",
 		Password: "",
@@ -24,15 +22,20 @@ func main() {
 	}
 	log.Println("INFO: connected to Redis")
 
-	// Silence the "declared but not used" error for now.
-	// We will pass redisClient to rate-limiter handlers in the next phase.
-	_ = redisClient
+	// ── Rate Limiters ────────────────────────────────────────────────────────
+	// Create the fixed window limiter:
+	//   limit  = 5 requests   (kept small so you can test the denial quickly)
+	//   window = 1 minute
+	//
+	// In production these values would come from environment variables or a
+	// database policy. We hardcode them here for now and replace in Phase 9.
+	fixedLimiter := limiter.NewFixedWindowLimiter(redisClient, 5, 1*time.Minute)
 
 	// ── HTTP Router ──────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
 
-	healthHandler := handler.NewHealthHandler()
-	mux.Handle("/health", healthHandler)
+	mux.Handle("/health", handler.NewHealthHandler())
+	mux.Handle("/v1/check", handler.NewCheckHandler(fixedLimiter))
 
 	// ── HTTP Server ──────────────────────────────────────────────────────────
 	server := &http.Server{

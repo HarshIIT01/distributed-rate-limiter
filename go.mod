@@ -1,3 +1,3 @@
-module github.com/your-username/distributed-rate-limiter
+module github.com/HarshIIT01/distributed-rate-limiter
 
 go 1.27.1

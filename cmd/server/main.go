@@ -1,47 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/HarshIIT01/distributed-rate-limiter/internal/handler"
 )
-
-// healthResponse defines the JSON structure for the health check response.
-// The struct tags (e.g., `json:"status"`) tell Go's JSON encoder
-// what key name to use in the output.
-type healthResponse struct {
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
-}
-
-// healthHandler handles GET /health requests.
-// It returns a JSON response indicating the service is running.
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	// Only allow GET requests on this endpoint.
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	resp := healthResponse{
-		Status:    "ok",
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	// Tell the client we are sending JSON.
-	w.Header().Set("Content-Type", "application/json")
-
-	// Write HTTP 200 status.
-	w.WriteHeader(http.StatusOK)
-
-	// Encode the struct as JSON and write it to the response body.
-	// If encoding fails, we log the error (nothing else we can do here
-	// since we already sent the status code).
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		log.Printf("ERROR: failed to encode health response: %v", err)
-	}
-}
 
 func main() {
 	// Create a new ServeMux (request router).
@@ -49,8 +14,11 @@ func main() {
 	// accidentally exposing routes registered by third-party packages.
 	mux := http.NewServeMux()
 
-	// Register our routes.
-	mux.HandleFunc("/health", healthHandler)
+	// Wire up handlers.
+	// main.go's only job is to create dependencies and register routes.
+	// No business logic lives here.
+	healthHandler := handler.NewHealthHandler()
+	mux.Handle("/health", healthHandler)
 
 	// Define the server with explicit timeouts.
 	// NEVER use http.ListenAndServe directly in production code —

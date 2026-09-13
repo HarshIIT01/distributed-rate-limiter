@@ -22,20 +22,21 @@ func main() {
 	}
 	log.Println("INFO: connected to Redis")
 
-	// ── Rate Limiters ────────────────────────────────────────────────────────
-	// Create the fixed window limiter:
-	//   limit  = 5 requests   (kept small so you can test the denial quickly)
-	//   window = 1 minute
+	// ── Rate Limiter ─────────────────────────────────────────────────────────
+	// Token Bucket configuration:
+	//   capacity   = 5 tokens  (burst: a client can make 5 requests instantly)
+	//   refillRate = 1 token/s (sustained: 1 new request allowed per second)
 	//
-	// In production these values would come from environment variables or a
-	// database policy. We hardcode them here for now and replace in Phase 9.
-	fixedLimiter := limiter.NewFixedWindowLimiter(redisClient, 5, 1*time.Minute)
+	// These small values make manual testing easy — you can exhaust the bucket
+	// quickly and watch it refill. Production values would be much larger and
+	// loaded from configuration/database.
+	rateLimiter := limiter.NewTokenBucketLimiter(redisClient, 5, 1.0)
 
 	// ── HTTP Router ──────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
 
 	mux.Handle("/health", handler.NewHealthHandler())
-	mux.Handle("/v1/check", handler.NewCheckHandler(fixedLimiter))
+	mux.Handle("/v1/check", handler.NewCheckHandler(rateLimiter))
 
 	// ── HTTP Server ──────────────────────────────────────────────────────────
 	server := &http.Server{

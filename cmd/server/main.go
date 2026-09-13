@@ -3,19 +3,30 @@ package main
 import (
 	"log"
 	"net/http"
-	"time"
 
+	"github.com/HarshIIT01/distributed-rate-limiter/internal/config"
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/handler"
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/limiter"
 	"github.com/HarshIIT01/distributed-rate-limiter/internal/redisclient"
 )
 
 func main() {
+	// ── Configuration ────────────────────────────────────────────────────────
+	// Load all settings from environment variables.
+	// Defaults make it work in development with no setup.
+	// Override with env vars for Docker / production.
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("FATAL: %v", err)
+	}
+	log.Printf("INFO: config loaded — algorithm=%s addr=%s",
+		cfg.Limiter.Algorithm, cfg.Redis.Address)
+
 	// ── Redis ────────────────────────────────────────────────────────────────
 	redisClient, err := redisclient.New(redisclient.Config{
-		Address:  "localhost:6379",
-		Password: "",
-		DB:       0,
+		Address:  cfg.Redis.Address,
+		Password: cfg.Redis.Password,
+		DB:       cfg.Redis.DB,
 	})
 	if err != nil {
 		log.Fatalf("FATAL: %v", err)
@@ -23,31 +34,58 @@ func main() {
 	log.Println("INFO: connected to Redis")
 
 	// ── Rate Limiter ─────────────────────────────────────────────────────────
-	// Token Bucket configuration:
-	//   capacity   = 5 tokens  (burst: a client can make 5 requests instantly)
-	//   refillRate = 1 token/s (sustained: 1 new request allowed per second)
-	//
-	// These small values make manual testing easy — you can exhaust the bucket
-	// quickly and watch it refill. Production values would be much larger and
-	// loaded from configuration/database.
-	rateLimiter := limiter.NewTokenBucketLimiter(redisClient, 5, 1.0)
+	// Select algorithm based on configuration.
+	// The handler accepts any RateLimiter interface — swapping algorithms
+	// requires only changing the env var, not recompiling.
+	var rateLimiter handler.RateLimiter
+	switch cfg.Limiter.Algorithm {
+	case "token_bucket":
+		rateLimiter = limiter.NewTokenBucketLimiter(
+			redisClient,
+			cfg.Limiter.Capacity,
+			cfg.Limiter.RefillRate,
+		)
+		log.Printf("INFO: using Token Bucket — capacity=%d refill=%.1f/s",
+			cfg.Limiter.Capacity, cfg.Limiter.RefillRate)
+
+	case "fixed_window":
+		rateLimiter = limiter.NewFixedWindowLimiter(
+			redisClient,
+			cfg.Limiter.DefaultLimit,
+			cfg.Limiter.WindowSize,
+		)
+		log.Printf("INFO: using Fixed Window — limit=%d window=%s",
+			cfg.Limiter.DefaultLimit, cfg.Limiter.WindowSize)
+
+	case "sliding_window":
+		rateLimiter = limiter.NewSlidingWindowLimiter(
+			redisClient,
+			cfg.Limiter.DefaultLimit,
+			cfg.Limiter.WindowSize,
+		)
+		log.Printf("INFO: using Sliding Window — limit=%d window=%s",
+			cfg.Limiter.DefaultLimit, cfg.Limiter.WindowSize)
+
+	default:
+		// config.validate() already checks this, so this is a safety net.
+		log.Fatalf("FATAL: unknown algorithm %q", cfg.Limiter.Algorithm)
+	}
 
 	// ── HTTP Router ──────────────────────────────────────────────────────────
 	mux := http.NewServeMux()
-
 	mux.Handle("/health", handler.NewHealthHandler())
 	mux.Handle("/v1/check", handler.NewCheckHandler(rateLimiter))
 
 	// ── HTTP Server ──────────────────────────────────────────────────────────
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         ":" + cfg.Server.Port,
 		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	log.Println("INFO: server starting on :8080")
+	log.Printf("INFO: server starting on :%s", cfg.Server.Port)
 
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("FATAL: server failed to start: %v", err)
